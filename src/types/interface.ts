@@ -74,7 +74,7 @@ export interface Win32Config {
   window_regex?: string;
   mouse?: string;
   keyboard?: string;
-  screencap?: string;
+  screencap?: string | string[];
 }
 
 export interface PlayCoverConfig {
@@ -131,7 +131,9 @@ export interface InputItem {
   pipeline_type?: 'string' | 'int' | 'bool';
   verify?: string;
   pattern_msg?: string;
-  /** MXU 扩展：输入控件类型，'file' 会渲染文件选择器，'time' 会渲染时间选择器 */
+  /**
+   * MXU 扩展：输入控件类型，'file' 会渲染文件选择器，'time' 会渲染时间选择器
+   */
   input_type?: 'text' | 'file' | 'time';
   /** MXU 扩展：输入框占位提示文本（i18n key） */
   placeholder?: string;

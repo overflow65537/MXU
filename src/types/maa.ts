@@ -88,6 +88,8 @@ export const Win32ScreencapMethod = {
   DXGI_DesktopDup_Window: 1n << 3n,
   PrintWindow: 1n << 4n,
   ScreenDC: 1n << 5n,
+  Foreground: (1n << 3n) | (1n << 5n), // DXGI_DesktopDup_Window | ScreenDC
+  Background: (1n << 1n) | (1n << 4n), // FramePool | PrintWindow
 } as const;
 
 /** Win32 输入方法 */
@@ -112,6 +114,8 @@ export const Win32ScreencapMethodNames: Record<string, bigint> = {
   DXGI_DesktopDup_Window: Win32ScreencapMethod.DXGI_DesktopDup_Window,
   PrintWindow: Win32ScreencapMethod.PrintWindow,
   ScreenDC: Win32ScreencapMethod.ScreenDC,
+  Foreground: Win32ScreencapMethod.Foreground,
+  Background: Win32ScreencapMethod.Background,
 };
 
 /** Win32 输入方法名称映射 */
@@ -127,8 +131,15 @@ export const Win32InputMethodNames: Record<string, bigint> = {
   PostMessageWithWindowPos: Win32InputMethod.PostMessageWithWindowPos,
 };
 
-/** 解析 Win32 截图方法名称 */
-export function parseWin32ScreencapMethod(name: string): number {
+/** 解析 Win32 截图方法名称，支持单个字符串或字符串数组（数组时按位或合并） */
+export function parseWin32ScreencapMethod(name: string | string[]): number {
+  if (Array.isArray(name)) {
+    const combined = name.reduce<bigint>((acc, n) => {
+      const method = Win32ScreencapMethodNames[n];
+      return method !== undefined ? acc | method : acc;
+    }, 0n);
+    return combined !== 0n ? Number(combined) : Number(Win32ScreencapMethod.FramePool);
+  }
   const method = Win32ScreencapMethodNames[name];
   if (method !== undefined) {
     return Number(method);
