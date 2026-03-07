@@ -83,7 +83,8 @@ export type ScreenshotFrameRate = 'unlimited' | '5' | '1' | '0.2' | '0.033';
 
 // MirrorChyan 设置
 export interface MirrorChyanSettings {
-  cdk: string; // MirrorChyan CDK
+  cdk: string; // MirrorChyan CDK（内存中为明文，仅用于运行时）
+  cdkEncrypted?: string; // 加密后的 CDK（持久化用，XOR + Base64）
   channel: UpdateChannel; // 更新频道：stable(正式版) / beta(公测版)
   githubPat?: string; // GitHub Personal Access Token（支持 classic 和 fine-grained）
 }

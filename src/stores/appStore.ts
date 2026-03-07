@@ -25,6 +25,7 @@ import type {
 } from '@/types/interface';
 import type { ConnectionStatus, TaskStatus } from '@/types/maa';
 import { getMxuSpecialTask, isMxuSpecialTask, MXU_SPECIAL_TASKS } from '@/types/specialTasks';
+import { decryptCdk, encryptCdk } from '@/utils/cdkCrypto';
 import { loggers } from '@/utils/logger';
 import { findSwitchCase } from '@/utils/optionHelpers';
 import { create } from 'zustand';
@@ -1055,7 +1056,17 @@ export const useAppStore = create<AppState>()(
         nextInstanceNumber: maxNumber + 1,
         windowSize: config.settings.windowSize || defaultWindowSize,
         windowPosition: config.settings.windowPosition,
-        mirrorChyanSettings: config.settings.mirrorChyan || defaultMirrorChyanSettings,
+        mirrorChyanSettings: (() => {
+          const saved = config.settings.mirrorChyan || defaultMirrorChyanSettings;
+          const piName = get().projectInterface?.name;
+          if (saved.cdk) {
+            return { ...saved, cdkEncrypted: encryptCdk(saved.cdk, piName) };
+          }
+          if (saved.cdkEncrypted) {
+            return { ...saved, cdk: decryptCdk(saved.cdkEncrypted, piName) };
+          }
+          return saved;
+        })(),
         proxySettings: config.settings.proxy,
         showOptionPreview: config.settings.showOptionPreview ?? true,
         sidePanelExpanded: config.settings.sidePanelExpanded ?? true,
@@ -1771,7 +1782,11 @@ function generateConfig(): MxuConfig {
       maxLogsPerInstance: state.maxLogsPerInstance,
       windowSize: state.windowSize,
       windowPosition: state.windowPosition,
-      mirrorChyan: state.mirrorChyanSettings,
+      mirrorChyan: {
+        ...state.mirrorChyanSettings,
+        cdk: '',
+        cdkEncrypted: encryptCdk(state.mirrorChyanSettings.cdk, state.projectInterface?.name),
+      },
       proxy: state.proxySettings,
       showOptionPreview: state.showOptionPreview,
       sidePanelExpanded: state.sidePanelExpanded,
