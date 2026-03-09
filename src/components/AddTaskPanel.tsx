@@ -382,11 +382,7 @@ export function AddTaskPanel() {
   const groups = projectInterface?.group;
   const hasGroups = (groups?.length ?? 0) > 0;
 
-  // 按 order 排序的分组列表
-  const sortedGroups = useMemo(() => {
-    if (!groups) return [];
-    return [...groups].sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
-  }, [groups]);
+  const sortedGroups = groups ?? [];
 
   // 分组展开/折叠状态（key: group name, value: 是否展开）
   const [groupExpanded, setGroupExpanded] = useState<Map<string, boolean>>(() => {

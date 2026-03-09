@@ -36,7 +36,6 @@ export interface GroupItem {
   label?: string;
   description?: string;
   icon?: string;
-  order?: number;
   default_expand?: boolean;
 }
 
