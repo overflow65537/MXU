@@ -947,6 +947,9 @@ export async function installUpdate(options: InstallUpdateOptions): Promise<bool
   const extractDir = joinPath(await dirname(zipPath), 'update_extract');
 
   try {
+    // 先清理上次可能残留的解压目录，避免历史文件混入本次更新
+    await invoke('cleanup_extract_dir', { extractDir }).catch(() => {});
+
     // 1. 解压更新包
     onProgress?.('extracting', zipPath);
     log.info(`解压更新包到: ${extractDir}`);

@@ -209,6 +209,34 @@ pub fn move_to_old_folder(source: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 删除文件或目录（目录递归删除）
+fn remove_path(path: &std::path::Path) -> std::io::Result<()> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+}
+
+/// 规范化增量包中的相对路径，移除常见前缀（./ .\ / \）
+fn normalize_relative_path(raw: &str) -> &str {
+    let mut s = raw.trim();
+    loop {
+        if let Some(stripped) = s.strip_prefix("./") {
+            s = stripped;
+        } else if let Some(stripped) = s.strip_prefix(".\\") {
+            s = stripped;
+        } else if let Some(stripped) = s.strip_prefix('/') {
+            s = stripped;
+        } else if let Some(stripped) = s.strip_prefix('\\') {
+            s = stripped;
+        } else {
+            break;
+        }
+    }
+    s
+}
+
 /// 应用增量更新：将 deleted 中的文件移动到 old 文件夹，然后复制新文件
 /// 即使移动旧文件失败，也会继续复制新文件，确保程序可用
 #[tauri::command]
@@ -224,19 +252,32 @@ pub fn apply_incremental_update(
     let target_path = std::path::Path::new(&target_dir);
     let mut move_errors: Vec<String> = Vec::new();
 
-    // 1. 尝试将 deleted 中列出的文件移动到 old 文件夹（失败不阻断）
+    // 1. 尝试将 deleted 中列出的文件移动到 old 文件夹（失败时兜底直接删除）
     for file in &deleted_files {
-        let file_path = target_path.join(file);
+        // 规范化 changes.json 里的相对路径，避免前导分隔符导致 join 偏离 target_dir
+        let normalized = normalize_relative_path(file);
+        let file_path = target_path.join(normalized);
         if file_path.exists() {
             if let Err(e) = move_to_old_folder(&file_path) {
                 warn!("移动旧文件失败（将继续更新）: {}", e);
                 move_errors.push(e);
+                // 兜底：即使无法备份到 old，也要确保 deleted 文件被删除
+                let remove_result = remove_path(&file_path);
+                if let Err(remove_err) = remove_result {
+                    warn!(
+                        "兜底删除失败（可能残留旧文件）: {} -> {}",
+                        file_path.display(),
+                        remove_err
+                    );
+                } else {
+                    info!("已兜底删除 deleted 文件: {}", file_path.display());
+                }
             }
         }
     }
 
     // 2. 复制新包内容到目标目录（覆盖）- 这一步必须执行
-    copy_dir_contents(&extract_dir, &target_dir, None)?;
+    copy_dir_contents(&extract_dir, &target_dir, Some(&["changes.json"]))?;
 
     if !move_errors.is_empty() {
         info!(
@@ -280,6 +321,16 @@ pub fn apply_full_update(extract_dir: String, target_dir: String) -> Result<(), 
             if let Err(e) = move_to_old_folder(&target_item) {
                 warn!("移动旧文件失败（将继续更新）: {}", e);
                 move_errors.push(e);
+                // 兜底：全量更新若无法备份旧目录，直接删除后再复制，避免残留已移除文件
+                if let Err(remove_err) = remove_path(&target_item) {
+                    warn!(
+                        "全量更新兜底删除失败（可能残留旧文件）: {} -> {}",
+                        target_item.display(),
+                        remove_err
+                    );
+                } else {
+                    info!("全量更新已兜底删除旧条目: {}", target_item.display());
+                }
             }
         }
     }
