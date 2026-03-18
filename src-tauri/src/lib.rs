@@ -166,6 +166,7 @@ pub fn run() {
             commands::update::cleanup_extract_dir,
             commands::update::fallback_update,
             commands::update::move_file_to_old,
+            commands::update::cleanup_update_artifacts,
             // 下载命令
             commands::download::get_github_release_by_version,
             commands::download::download_file,

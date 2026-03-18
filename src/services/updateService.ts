@@ -1001,6 +1001,12 @@ export async function installUpdate(options: InstallUpdateOptions): Promise<bool
     // 将下载的 zip 文件移动到 old 文件夹
     await moveToOldFolder(zipPath);
 
+    // 清理更新残留产物：target_dir/changes.json 和 cache/*.downloading
+    const cacheDir = await getCacheDir();
+    await invoke('cleanup_update_artifacts', { targetDir, cacheDir }).catch((e) => {
+      log.warn('清理更新残留产物失败（忽略）:', e);
+    });
+
     log.info('更新安装完成');
     onProgress?.('done');
 
