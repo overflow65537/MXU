@@ -293,14 +293,14 @@ fn mxu_launch_action_fn(
 }
 
 // ============================================================================
-// MXU_WEBHOOK Custom Action
+// MXU_WEBHOOK Custom Action (外部通知: Webhook + SMTP)
 // ============================================================================
 
 /// MXU_WEBHOOK 动作名称常量
 const MXU_WEBHOOK_ACTION: &str = "MXU_WEBHOOK_ACTION";
 
 /// MXU_WEBHOOK custom action 回调函数
-/// 从 custom_action_param 中读取 url，执行 HTTP GET 请求
+/// 根据 notify_type 参数选择 Webhook GET 请求或 SMTP 邮件发送
 fn mxu_webhook_action_fn(
     _ctx: &maa_framework::context::Context,
     args: &maa_framework::custom::ActionArgs,
@@ -316,6 +316,19 @@ fn mxu_webhook_action_fn(
         }
     };
 
+    let notify_type = json
+        .get("notify_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("webhook");
+
+    match notify_type {
+        "smtp" => mxu_webhook_smtp(&json),
+        _ => mxu_webhook_http(&json),
+    }
+}
+
+/// Webhook 模式：发送 HTTP GET 请求
+fn mxu_webhook_http(json: &serde_json::Value) -> bool {
     let url = match json.get("url").and_then(|v| v.as_str()) {
         Some(u) if !u.trim().is_empty() => u.to_string(),
         _ => {
@@ -350,6 +363,141 @@ fn mxu_webhook_action_fn(
         }
         Err(e) => {
             log::error!("[MXU_WEBHOOK] Request failed: {}", e);
+            false
+        }
+    }
+}
+
+/// SMTP 模式：发送邮件
+fn mxu_webhook_smtp(json: &serde_json::Value) -> bool {
+    use lettre::message::header::ContentType;
+    use lettre::transport::smtp::authentication::Credentials;
+    use lettre::{Message, SmtpTransport, Transport};
+
+    let smtp_host = match json.get("smtp_host").and_then(|v| v.as_str()) {
+        Some(h) if !h.trim().is_empty() => h.trim().to_string(),
+        _ => {
+            warn!("[MXU_WEBHOOK_SMTP] Missing or empty 'smtp_host'");
+            return false;
+        }
+    };
+
+    let smtp_port: u16 = json
+        .get("smtp_port")
+        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .unwrap_or(587) as u16;
+
+    let smtp_username = match json.get("smtp_username").and_then(|v| v.as_str()) {
+        Some(u) if !u.trim().is_empty() => u.trim().to_string(),
+        _ => {
+            warn!("[MXU_WEBHOOK_SMTP] Missing or empty 'smtp_username'");
+            return false;
+        }
+    };
+
+    let smtp_password = match json.get("smtp_password").and_then(|v| v.as_str()) {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => {
+            warn!("[MXU_WEBHOOK_SMTP] Missing or empty 'smtp_password'");
+            return false;
+        }
+    };
+
+    let smtp_from = match json.get("smtp_from").and_then(|v| v.as_str()) {
+        Some(f) if !f.trim().is_empty() => f.trim().to_string(),
+        _ => {
+            warn!("[MXU_WEBHOOK_SMTP] Missing or empty 'smtp_from'");
+            return false;
+        }
+    };
+
+    let smtp_to = match json.get("smtp_to").and_then(|v| v.as_str()) {
+        Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+        _ => {
+            warn!("[MXU_WEBHOOK_SMTP] Missing or empty 'smtp_to'");
+            return false;
+        }
+    };
+
+    let custom_content = json
+        .get("custom_content")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let subject = if custom_content {
+        json.get("smtp_subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("MXU 通知")
+            .to_string()
+    } else {
+        "MXU 任务完成通知".to_string()
+    };
+
+    let body = if custom_content {
+        json.get("smtp_body")
+            .and_then(|v| v.as_str())
+            .unwrap_or("MXU 任务已执行完毕。")
+            .to_string()
+    } else {
+        "MXU 任务已执行完毕。".to_string()
+    };
+
+    info!(
+        "[MXU_WEBHOOK_SMTP] Sending email via {}:{} from={} to={} subject={}",
+        smtp_host, smtp_port, smtp_from, smtp_to, subject
+    );
+
+    let from_mailbox: lettre::message::Mailbox = match smtp_from.parse() {
+        Ok(m) => m,
+        Err(e) => {
+            log::error!("[MXU_WEBHOOK_SMTP] Invalid 'from' address '{}': {}", smtp_from, e);
+            return false;
+        }
+    };
+
+    let to_mailbox: lettre::message::Mailbox = match smtp_to.parse() {
+        Ok(m) => m,
+        Err(e) => {
+            log::error!("[MXU_WEBHOOK_SMTP] Invalid 'to' address '{}': {}", smtp_to, e);
+            return false;
+        }
+    };
+
+    let email = match Message::builder()
+        .from(from_mailbox)
+        .to(to_mailbox)
+        .subject(&subject)
+        .header(ContentType::TEXT_PLAIN)
+        .body(body)
+    {
+        Ok(e) => e,
+        Err(e) => {
+            log::error!("[MXU_WEBHOOK_SMTP] Failed to build email: {}", e);
+            return false;
+        }
+    };
+
+    let creds = Credentials::new(smtp_username, smtp_password);
+
+    let mailer = match SmtpTransport::starttls_relay(&smtp_host) {
+        Ok(builder) => builder
+            .port(smtp_port)
+            .credentials(creds)
+            .timeout(Some(std::time::Duration::from_secs(15)))
+            .build(),
+        Err(e) => {
+            log::error!("[MXU_WEBHOOK_SMTP] Failed to create SMTP transport: {}", e);
+            return false;
+        }
+    };
+
+    match mailer.send(&email) {
+        Ok(_) => {
+            info!("[MXU_WEBHOOK_SMTP] Email sent successfully");
+            true
+        }
+        Err(e) => {
+            log::error!("[MXU_WEBHOOK_SMTP] Failed to send email: {}", e);
             false
         }
     }

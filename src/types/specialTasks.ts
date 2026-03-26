@@ -262,12 +262,12 @@ const MXU_LAUNCH_SKIP_OPTION_DEF_INTERNAL: SwitchOption = {
   default_case: 'No',
 };
 
-// MXU_WEBHOOK 任务定义
+// MXU_WEBHOOK（外部通知）任务定义
 const MXU_WEBHOOK_TASK_DEF_INTERNAL: TaskItem = {
   name: MXU_WEBHOOK_TASK_NAME,
   label: 'specialTask.webhook.label',
   entry: MXU_WEBHOOK_ENTRY,
-  option: ['__MXU_WEBHOOK_OPTION__'],
+  option: ['__MXU_WEBHOOK_TYPE_OPTION__'],
   pipeline_override: {
     [MXU_WEBHOOK_ENTRY]: {
       action: 'Custom',
@@ -277,8 +277,41 @@ const MXU_WEBHOOK_TASK_DEF_INTERNAL: TaskItem = {
   },
 };
 
-// MXU_WEBHOOK 输入选项定义（URL）
-const MXU_WEBHOOK_OPTION_DEF_INTERNAL: InputOption = {
+// MXU_WEBHOOK 通知方式选择（Webhook / SMTP）
+const MXU_WEBHOOK_TYPE_OPTION_DEF_INTERNAL: SelectOption = {
+  type: 'select',
+  label: 'specialTask.webhook.typeLabel',
+  cases: [
+    {
+      name: 'webhook',
+      label: 'specialTask.webhook.typeWebhook',
+      option: ['__MXU_WEBHOOK_URL_OPTION__'],
+      pipeline_override: {
+        [MXU_WEBHOOK_ENTRY]: {
+          custom_action_param: {
+            notify_type: 'webhook',
+          },
+        },
+      },
+    },
+    {
+      name: 'smtp',
+      label: 'specialTask.webhook.typeSmtp',
+      option: ['__MXU_WEBHOOK_SMTP_OPTION__', '__MXU_WEBHOOK_SMTP_CUSTOM_OPTION__'],
+      pipeline_override: {
+        [MXU_WEBHOOK_ENTRY]: {
+          custom_action_param: {
+            notify_type: 'smtp',
+          },
+        },
+      },
+    },
+  ],
+  default_case: 'webhook',
+};
+
+// MXU_WEBHOOK URL 输入选项定义（Webhook 模式）
+const MXU_WEBHOOK_URL_OPTION_DEF_INTERNAL: InputOption = {
   type: 'input',
   label: 'specialTask.webhook.optionLabel',
   inputs: [
@@ -294,6 +327,132 @@ const MXU_WEBHOOK_OPTION_DEF_INTERNAL: InputOption = {
     [MXU_WEBHOOK_ENTRY]: {
       custom_action_param: {
         url: '{url}',
+      },
+    },
+  },
+};
+
+// MXU_WEBHOOK SMTP 连接设置输入选项定义
+const MXU_WEBHOOK_SMTP_OPTION_DEF_INTERNAL: InputOption = {
+  type: 'input',
+  label: 'specialTask.webhook.smtpOptionLabel',
+  inputs: [
+    {
+      name: 'smtp_host',
+      label: 'specialTask.webhook.smtpHost',
+      default: '',
+      pipeline_type: 'string',
+      placeholder: 'specialTask.webhook.smtpHostPlaceholder',
+    },
+    {
+      name: 'smtp_port',
+      label: 'specialTask.webhook.smtpPort',
+      default: '587',
+      pipeline_type: 'int',
+      verify: '^[1-9]\\d{0,4}$',
+      pattern_msg: 'specialTask.webhook.smtpPortError',
+    },
+    {
+      name: 'smtp_username',
+      label: 'specialTask.webhook.smtpUsername',
+      default: '',
+      pipeline_type: 'string',
+      placeholder: 'specialTask.webhook.smtpUsernamePlaceholder',
+    },
+    {
+      name: 'smtp_password',
+      label: 'specialTask.webhook.smtpPassword',
+      default: '',
+      pipeline_type: 'string',
+      placeholder: 'specialTask.webhook.smtpPasswordPlaceholder',
+    },
+    {
+      name: 'smtp_from',
+      label: 'specialTask.webhook.smtpFrom',
+      default: '',
+      pipeline_type: 'string',
+      placeholder: 'specialTask.webhook.smtpFromPlaceholder',
+    },
+    {
+      name: 'smtp_to',
+      label: 'specialTask.webhook.smtpTo',
+      default: '',
+      pipeline_type: 'string',
+      placeholder: 'specialTask.webhook.smtpToPlaceholder',
+    },
+  ],
+  pipeline_override: {
+    [MXU_WEBHOOK_ENTRY]: {
+      custom_action_param: {
+        smtp_host: '{smtp_host}',
+        smtp_port: '{smtp_port}',
+        smtp_username: '{smtp_username}',
+        smtp_password: '{smtp_password}',
+        smtp_from: '{smtp_from}',
+        smtp_to: '{smtp_to}',
+      },
+    },
+  },
+};
+
+// MXU_WEBHOOK SMTP 自定义正文开关
+const MXU_WEBHOOK_SMTP_CUSTOM_OPTION_DEF_INTERNAL: SwitchOption = {
+  type: 'switch',
+  label: 'specialTask.webhook.smtpCustomLabel',
+  description: 'specialTask.webhook.smtpCustomDescription',
+  cases: [
+    {
+      name: 'Yes',
+      label: 'specialTask.webhook.smtpCustomYes',
+      option: ['__MXU_WEBHOOK_SMTP_CONTENT_OPTION__'],
+      pipeline_override: {
+        [MXU_WEBHOOK_ENTRY]: {
+          custom_action_param: {
+            custom_content: true,
+          },
+        },
+      },
+    },
+    {
+      name: 'No',
+      label: 'specialTask.webhook.smtpCustomNo',
+      pipeline_override: {
+        [MXU_WEBHOOK_ENTRY]: {
+          custom_action_param: {
+            custom_content: false,
+          },
+        },
+      },
+    },
+  ],
+  default_case: 'No',
+};
+
+// MXU_WEBHOOK SMTP 自定义标题和正文输入
+const MXU_WEBHOOK_SMTP_CONTENT_OPTION_DEF_INTERNAL: InputOption = {
+  type: 'input',
+  label: 'specialTask.webhook.smtpContentLabel',
+  inputs: [
+    {
+      name: 'smtp_subject',
+      label: 'specialTask.webhook.smtpSubject',
+      default: '',
+      pipeline_type: 'string',
+      placeholder: 'specialTask.webhook.smtpSubjectPlaceholder',
+    },
+    {
+      name: 'smtp_body',
+      label: 'specialTask.webhook.smtpBody',
+      default: '',
+      pipeline_type: 'string',
+      placeholder: 'specialTask.webhook.smtpBodyPlaceholder',
+    },
+  ],
+  pipeline_override: {
+    [MXU_WEBHOOK_ENTRY]: {
+      custom_action_param: {
+        smtp_subject: '{smtp_subject}',
+        smtp_body: '{smtp_body}',
       },
     },
   },
@@ -563,7 +722,11 @@ export const MXU_SPECIAL_TASKS: Record<string, MxuSpecialTaskDefinition> = {
     entry: MXU_WEBHOOK_ENTRY,
     taskDef: MXU_WEBHOOK_TASK_DEF_INTERNAL,
     optionDefs: {
-      __MXU_WEBHOOK_OPTION__: MXU_WEBHOOK_OPTION_DEF_INTERNAL,
+      __MXU_WEBHOOK_TYPE_OPTION__: MXU_WEBHOOK_TYPE_OPTION_DEF_INTERNAL,
+      __MXU_WEBHOOK_URL_OPTION__: MXU_WEBHOOK_URL_OPTION_DEF_INTERNAL,
+      __MXU_WEBHOOK_SMTP_OPTION__: MXU_WEBHOOK_SMTP_OPTION_DEF_INTERNAL,
+      __MXU_WEBHOOK_SMTP_CUSTOM_OPTION__: MXU_WEBHOOK_SMTP_CUSTOM_OPTION_DEF_INTERNAL,
+      __MXU_WEBHOOK_SMTP_CONTENT_OPTION__: MXU_WEBHOOK_SMTP_CONTENT_OPTION_DEF_INTERNAL,
     },
     iconName: 'Bell',
     iconColorClass: 'text-accent/80',
