@@ -431,6 +431,10 @@ pub async fn run_action(
 
             if stop_requested {
                 info!("run_action wait cancelled by stop request: {}", instance_id);
+                // 停止只中断等待，不强制终止前置程序；交给后台线程 wait 以避免子进程泄漏。
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
                 return Err("MXU_PRE_ACTION_CANCELLED".to_string());
             }
 
