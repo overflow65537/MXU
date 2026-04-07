@@ -698,6 +698,7 @@ export const maaService = {
    * @returns 程序退出码（不等待时返回 0）
    */
   async runAction(
+    instanceId: string,
     program: string,
     args: string,
     cwd?: string,
@@ -710,6 +711,7 @@ export const maaService = {
     log.info('执行动作:', program, args, '等待:', waitForExit, '使用cmd:', useCmd);
     try {
       const exitCode = await invoke<number>('run_action', {
+        instanceId,
         program,
         args,
         cwd: cwd || null,
@@ -722,6 +724,11 @@ export const maaService = {
       log.error('动作执行失败:', err);
       throw err;
     }
+  },
+
+  async setPreActionStop(instanceId: string, stop: boolean): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('set_pre_action_stop', { instanceId, stop });
   },
 
   /**

@@ -31,6 +31,7 @@ import { scheduleService } from '@/services/scheduleService';
 import { buildPiEnvVars } from '@/utils/piEnv';
 
 const log = loggers.task;
+const PRE_ACTION_CANCELLED_ERROR = 'MXU_PRE_ACTION_CANCELLED';
 
 interface ToolbarProps {
   showAddPanel: boolean;
@@ -98,6 +99,12 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
   // 权限提示弹窗状态
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [isRestartingAsAdmin, setIsRestartingAsAdmin] = useState(false);
+  const [preActionControlledInstanceId, setPreActionControlledInstanceId] = useState<string | null>(
+    null,
+  );
+  const preActionControlledInstanceIdRef = useRef<string | null>(null);
+  const preActionStopRequestedRef = useRef(false);
+  const lastStartCancelledRef = useRef(false);
 
   const instance = getActiveInstance();
   const tasks = instance?.selectedTasks || [];
@@ -108,6 +115,8 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
   const translations = interfaceTranslations[langKey];
 
   const instanceId = instance?.id || '';
+  const isPreActionControlledInstance = Boolean(instanceId) && preActionControlledInstanceId === instanceId;
+  const isStartStopRunning = Boolean(instance?.isRunning) || isPreActionControlledInstance;
 
   // 检查是否有保存的设备和资源配置（用于权限检查等）
   const currentControllerName =
@@ -156,6 +165,52 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
     }
   };
 
+  const beginPreActionControl = useCallback(async (targetInstanceId: string) => {
+    await maaService.setPreActionStop(targetInstanceId, false);
+    preActionControlledInstanceIdRef.current = targetInstanceId;
+    preActionStopRequestedRef.current = false;
+    setPreActionControlledInstanceId(targetInstanceId);
+  }, []);
+
+  const endPreActionControl = useCallback(async (targetInstanceId: string) => {
+    if (preActionControlledInstanceIdRef.current === targetInstanceId) {
+      preActionControlledInstanceIdRef.current = null;
+      preActionStopRequestedRef.current = false;
+      setPreActionControlledInstanceId((current) =>
+        current === targetInstanceId ? null : current,
+      );
+    }
+    try {
+      await maaService.setPreActionStop(targetInstanceId, false);
+    } catch (err) {
+      log.warn('清理前置程序停止标记失败:', err);
+    }
+  }, []);
+
+  const throwIfPreActionStopped = useCallback((targetInstanceId: string) => {
+    if (
+      preActionControlledInstanceIdRef.current === targetInstanceId &&
+      preActionStopRequestedRef.current
+    ) {
+      throw new Error(PRE_ACTION_CANCELLED_ERROR);
+    }
+  }, []);
+
+  const waitWithStopCheck = useCallback(
+    async (totalMs: number, targetInstanceId: string) => {
+      const intervalMs = 100;
+      let elapsed = 0;
+      while (elapsed < totalMs) {
+        throwIfPreActionStopped(targetInstanceId);
+        const sleepMs = Math.min(intervalMs, totalMs - elapsed);
+        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+        elapsed += sleepMs;
+      }
+      throwIfPreActionStopped(targetInstanceId);
+    },
+    [throwIfPreActionStopped],
+  );
+
   /**
    * 统一任务启动入口 - 供手动启动、定时启动、快捷键启动等场景复用
    * @param targetInstance 目标实例
@@ -175,6 +230,7 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
       const { schedulePolicyName, onPhaseChange } = options || {};
       const targetId = targetInstance.id;
       const targetTasks = targetInstance.selectedTasks || [];
+      lastStartCancelledRef.current = false;
 
       // 检查是否有启用的任务
       const enabledTasks = targetTasks.filter((t) => t.enabled);
@@ -184,7 +240,10 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
       }
 
       // 检查是否正在运行
-      if (targetInstance.isRunning) {
+      if (
+        targetInstance.isRunning ||
+        preActionControlledInstanceIdRef.current === targetId
+      ) {
         log.warn(`实例 ${targetInstance.name} 正在运行中`);
         return false;
       }
@@ -298,20 +357,26 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
           }
         }
 
+        let preActionControlStarted = false;
         if (shouldRunPreAction && preAction) {
+          preActionControlStarted = true;
+          await beginPreActionControl(targetId);
           log.info(`实例 ${targetInstance.name}: 执行前置动作:`, preAction.program);
           addLog(targetId, {
             type: 'info',
             message: t('action.preActionStarting'),
           });
           try {
+            throwIfPreActionStopped(targetId);
             const exitCode = await maaService.runAction(
+              targetId,
               preAction.program,
               preAction.args,
               basePath,
               preAction.waitForExit ?? true,
               preAction.useCmd ?? false,
             );
+            throwIfPreActionStopped(targetId);
             if (exitCode !== 0) {
               log.warn(`实例 ${targetInstance.name}: 前置动作退出码非零:`, exitCode);
               addLog(targetId, {
@@ -352,6 +417,7 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
               const maxAttempts = 300; // 最多等待 5 分钟
 
               while (!deviceFound && attempts < maxAttempts) {
+                throwIfPreActionStopped(targetId);
                 try {
                   if (controllerType === 'Adb') {
                     const devices = await maaService.findAdbDevices();
@@ -397,7 +463,7 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
 
                 if (!deviceFound) {
                   attempts++;
-                  await new Promise((resolve) => setTimeout(resolve, 1000)); // 等待 1 秒
+                  await waitWithStopCheck(1000, targetId);
                 }
               }
 
@@ -464,7 +530,7 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
                     type: 'info',
                     message: t('action.preActionConnectDelay', { seconds: delaySec }),
                   });
-                  await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
+                  await waitWithStopCheck(delaySec * 1000, targetId);
                 }
 
                 // 前置程序（重新）启动了应用，旧窗口句柄已失效，必须重新连接
@@ -480,12 +546,19 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
               }
             }
           } catch (err) {
+            if ((err instanceof Error ? err.message : String(err)) === PRE_ACTION_CANCELLED_ERROR) {
+              throw err;
+            }
             log.error(`实例 ${targetInstance.name}: 前置动作执行失败:`, err);
             addLog(targetId, {
               type: 'error',
               message: t('action.preActionFailed', { error: String(err) }),
             });
             // 前置动作失败不阻止任务执行，继续
+          } finally {
+            if (preActionControlStarted) {
+              await endPreActionControl(targetId);
+            }
           }
         }
 
@@ -971,10 +1044,13 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
         log.error(`实例 ${targetInstance.name}: 任务启动异常:`, err);
 
         const errMsg = err instanceof Error ? err.message : String(err);
-        addLog(targetId, {
-          type: 'error',
-          message: `${t('taskList.autoConnect.startFailed')}: ${errMsg}`,
-        });
+        const cancelled = errMsg === PRE_ACTION_CANCELLED_ERROR;
+        if (!cancelled) {
+          addLog(targetId, {
+            type: 'error',
+            message: `${t('taskList.autoConnect.startFailed')}: ${errMsg}`,
+          });
+        }
 
         const failedAgentConfigs = normalizeAgentConfigs(projectInterface?.agent);
         if (failedAgentConfigs && failedAgentConfigs.length > 0) {
@@ -999,12 +1075,16 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
         }
 
         updateInstance(targetId, { isRunning: false });
-        setInstanceTaskStatus(targetId, 'Failed');
+        setInstanceTaskStatus(targetId, cancelled ? null : 'Failed');
         setInstanceCurrentTaskId(targetId, null);
         clearTaskRunStatus(targetId);
         clearPendingTasks(targetId);
         clearScheduleExecution(targetId);
         cancelTaskQueueMonitor(targetId);
+        if (cancelled) {
+          lastStartCancelledRef.current = true;
+          setIsStopping(false);
+        }
 
         return false;
       }
@@ -1031,6 +1111,10 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
       setShowAddTaskPanel,
       addLog,
       t,
+      beginPreActionControl,
+      endPreActionControl,
+      throwIfPreActionStopped,
+      waitWithStopCheck,
     ],
   );
 
@@ -1145,7 +1229,20 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
   const performStop = async (targetInstanceId: string) => {
     if (isStopping) return;
     setIsStopping(true);
+    let keepStoppingForPreAction = false;
     try {
+      if (preActionControlledInstanceIdRef.current === targetInstanceId) {
+        preActionStopRequestedRef.current = true;
+        try {
+          await maaService.setPreActionStop(targetInstanceId, true);
+          keepStoppingForPreAction = true;
+        } catch (err) {
+          preActionStopRequestedRef.current = false;
+          log.error('发送前置程序停止请求失败:', err);
+          throw err;
+        }
+        return;
+      }
       log.info('停止任务...', targetInstanceId);
       cancelTaskQueueMonitor(targetInstanceId);
       await maaService.stopTask(targetInstanceId);
@@ -1166,14 +1263,16 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
       clearPendingTasks(targetInstanceId);
       clearScheduleExecution(targetInstanceId);
     } finally {
-      setIsStopping(false);
+      if (!keepStoppingForPreAction) {
+        setIsStopping(false);
+      }
     }
   };
 
   const handleStartStop = async () => {
     if (!instance) return;
 
-    if (instance.isRunning) {
+    if (isStartStopRunning) {
       // 停止任务
       try {
         await performStop(instance.id);
@@ -1203,7 +1302,7 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
           onPhaseChange: setAutoConnectPhase,
         });
 
-        if (!success) {
+        if (!success && !lastStartCancelledRef.current) {
           throw new Error(t('taskList.autoConnect.startFailed'));
         }
       } catch (err) {
@@ -1237,7 +1336,10 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
         }),
       });
 
-      if (currentInstance.isRunning) {
+      if (
+        currentInstance.isRunning ||
+        preActionControlledInstanceIdRef.current === currentInstance.id
+      ) {
         addLog(currentInstance.id, {
           type: 'error',
           message: t('logs.messages.hotkeyStartFailed'),
@@ -1263,7 +1365,12 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
     };
 
     const handleStopTasks = async (evt: Event) => {
-      const runningInstance = useAppStore.getState().instances.find((i) => i.isRunning);
+      const storeState = useAppStore.getState();
+      const runningInstance =
+        storeState.instances.find((i) => i.isRunning) ||
+        (preActionControlledInstanceIdRef.current
+          ? storeState.instances.find((i) => i.id === preActionControlledInstanceIdRef.current)
+          : undefined);
       if (!runningInstance) return;
       if (isStopping) return;
 
@@ -1303,10 +1410,10 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
       document.removeEventListener('mxu-stop-tasks', handleStopTasks);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instance?.id, instance?.isRunning]);
+  }, [instance?.id, instance?.isRunning, isStopping]);
 
   // canRun 只检查是否有启用的任务；运行中时按钮用于停止，不应禁用
-  const isDisabled = (tasks.length === 0 || !canRun) && !instance?.isRunning;
+  const isDisabled = (tasks.length === 0 || !canRun) && !isStartStopRunning;
 
   // 获取启动按钮的文本
   const getStartButtonText = () => {
@@ -1421,35 +1528,35 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
         <button
           data-role="start-stop-button"
           onClick={handleStartStop}
-          disabled={isDisabled || isStarting || isStopping}
+          disabled={isDisabled || isStopping || (isStarting && !isStartStopRunning)}
           className={clsx(
             'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-            isStarting
-              ? 'bg-success text-white'
-              : isStopping
-                ? 'bg-warning text-white'
-                : instance?.isRunning
-                  ? 'bg-error hover:bg-error/90 text-white'
+            isStopping
+              ? 'bg-warning text-white'
+              : isStartStopRunning
+                ? 'bg-error hover:bg-error/90 text-white'
+                : isStarting
+                  ? 'bg-success text-white'
                   : isDisabled
                     ? 'bg-bg-active text-text-tertiary cursor-not-allowed'
                     : 'bg-accent hover:bg-accent-hover text-white',
           )}
           title={getButtonTitle()}
         >
-          {isStarting ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>{getStartButtonText()}</span>
-            </>
-          ) : isStopping ? (
+          {isStopping ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
               <span>{t('taskList.stoppingTasks')}</span>
             </>
-          ) : instance?.isRunning ? (
+          ) : isStartStopRunning ? (
             <>
               <StopCircle className="w-4 h-4" />
               <span>{t('taskList.stopTasks')}</span>
+            </>
+          ) : isStarting ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>{getStartButtonText()}</span>
             </>
           ) : (
             <>
