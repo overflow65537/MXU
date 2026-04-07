@@ -1158,10 +1158,18 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
   const performStop = async (targetInstanceId: string) => {
     if (isStopping) return;
     setIsStopping(true);
+    let keepStoppingForPreAction = false;
     try {
       if (preActionControlledInstanceIdRef.current === targetInstanceId) {
         preActionStopRequestedRef.current = true;
-        await maaService.setPreActionStop(targetInstanceId, true);
+        try {
+          await maaService.setPreActionStop(targetInstanceId, true);
+          keepStoppingForPreAction = true;
+        } catch (err) {
+          preActionStopRequestedRef.current = false;
+          log.error('发送前置程序停止请求失败:', err);
+          throw err;
+        }
         return;
       }
       log.info('停止任务...', targetInstanceId);
@@ -1184,7 +1192,7 @@ export function Toolbar({ showAddPanel, onToggleAddPanel }: ToolbarProps) {
       clearPendingTasks(targetInstanceId);
       clearScheduleExecution(targetInstanceId);
     } finally {
-      if (preActionControlledInstanceIdRef.current !== targetInstanceId) {
+      if (!keepStoppingForPreAction) {
         setIsStopping(false);
       }
     }
