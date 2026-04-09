@@ -8,6 +8,11 @@ import { normalizeAgentConfigs } from '@/types/interface';
 import { loggers } from '@/utils/logger';
 
 import { maaService } from './maaService';
+import {
+  clearExitAfterTaskQueueSettled,
+  consumeExitAfterTaskQueueSettled,
+  exitAppDirectly,
+} from './uiTaskService';
 
 const log = loggers.task;
 
@@ -35,6 +40,8 @@ async function stopAgentIfNeeded(instanceId: string) {
 }
 
 async function finalizeTaskRun(instanceId: string, status: 'Succeeded' | 'Failed') {
+  const shouldExit = consumeExitAfterTaskQueueSettled(instanceId);
+
   await stopAgentIfNeeded(instanceId);
 
   const state = useAppStore.getState();
@@ -43,6 +50,11 @@ async function finalizeTaskRun(instanceId: string, status: 'Succeeded' | 'Failed
   state.setInstanceCurrentTaskId(instanceId, null);
   state.clearPendingTasks(instanceId);
   state.clearScheduleExecution(instanceId);
+
+  if (shouldExit) {
+    log.info(`[task-monitor#${instanceId}] 任务队列结束，执行前端关闭自身`);
+    await exitAppDirectly();
+  }
 }
 
 function getPendingTaskIds(instanceId: string) {
@@ -116,11 +128,13 @@ async function monitorTaskQueue(instanceId: string, controller: AbortController)
 export function cancelTaskQueueMonitor(instanceId: string) {
   const controller = taskMonitorControllers.get(instanceId);
   if (!controller) {
+    clearExitAfterTaskQueueSettled(instanceId);
     return;
   }
 
   controller.abort();
   taskMonitorControllers.delete(instanceId);
+  clearExitAfterTaskQueueSettled(instanceId);
 }
 
 export function startTaskQueueMonitor(instanceId: string) {

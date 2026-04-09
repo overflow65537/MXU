@@ -32,10 +32,15 @@ import { loggers, generateTaskPipelineOverride } from '@/utils';
 import type { TaskConfig } from '@/types/maa';
 import { normalizeAgentConfigs } from '@/types/interface';
 import { getInterfaceLangKey } from '@/i18n';
-import { getMxuSpecialTask } from '@/types/specialTasks';
+import { getMxuSpecialTask, isMxuKillProcSelfMode } from '@/types/specialTasks';
 import { startGlobalCallbackListener } from '@/components/connection/callbackCache';
 import { cancelTaskQueueMonitor, startTaskQueueMonitor } from '@/services/taskMonitor';
 import { stopInstanceTasks } from '@/services/taskStopService';
+import {
+  clearExitAfterTaskQueueSettled,
+  exitAppDirectly,
+  scheduleExitAfterTaskQueueSettled,
+} from '@/services/uiTaskService';
 import { buildPiEnvVars } from '@/utils/piEnv';
 
 const log = loggers.ui;
@@ -113,6 +118,9 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
   const tasks = instance?.selectedTasks || [];
   const enabledTasks = tasks.filter((t) => t.enabled);
   const canRun = isConnected && isResourceLoaded && enabledTasks.length > 0;
+  const firstSelfManagedTaskIndex = enabledTasks.findIndex((task) => isMxuKillProcSelfMode(task));
+  const canRunWithoutConnection =
+    enabledTasks.length > 0 && firstSelfManagedTaskIndex === 0;
 
   // 获取当前控制器和资源名（用于 pipeline override 生成）
   const currentControllerName =
@@ -197,7 +205,7 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
     async (e: React.MouseEvent) => {
       e.stopPropagation();
 
-      if (!instance || (!canRun && !isRunning)) return;
+      if (!instance || ((!canRun && !canRunWithoutConnection) && !isRunning)) return;
 
       if (isRunning) {
         // 停止任务
@@ -215,16 +223,29 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
         }
       } else {
         // 启动任务
-        if (!canRun) return;
+        if (!canRun && !canRunWithoutConnection) return;
 
         setIsStarting(true);
 
         try {
           log.info(`[${instanceName}] 开始执行任务, 数量:`, enabledTasks.length);
 
+          const tasksBeforeSelfManaged =
+            firstSelfManagedTaskIndex >= 0
+              ? enabledTasks.slice(0, firstSelfManagedTaskIndex)
+              : enabledTasks;
+          const shouldExitAfterQueue = firstSelfManagedTaskIndex >= 0;
+
+          if (shouldExitAfterQueue && tasksBeforeSelfManaged.length === 0) {
+            log.info(`[${instanceName}] 执行前端关闭自身任务`);
+            await exitAppDirectly();
+            setIsStarting(false);
+            return;
+          }
+
           // 构建任务配置列表
           const taskConfigs: TaskConfig[] = [];
-          for (const selectedTask of enabledTasks) {
+          for (const selectedTask of tasksBeforeSelfManaged) {
             // 先检查是否是 MXU 特殊任务
             const specialTask = getMxuSpecialTask(selectedTask.taskName);
             const taskDef =
@@ -252,9 +273,19 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
           }
 
           if (taskConfigs.length === 0) {
+            if (shouldExitAfterQueue) {
+              log.info(`[${instanceName}] 没有需要连接执行的任务，直接关闭自身`);
+              await exitAppDirectly();
+              setIsStarting(false);
+              return;
+            }
             log.warn(`[${instanceName}] 没有可执行的任务`);
             setIsStarting(false);
             return;
+          }
+
+          if (shouldExitAfterQueue) {
+            scheduleExitAfterTaskQueueSettled(instanceId);
           }
 
           // 准备 Agent 配置（支持单个或多个 Agent）
@@ -292,24 +323,24 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
           log.info(`[${instanceName}] 任务已提交, task_ids:`, taskIds);
 
           // 初始化任务运行状态
-          const enabledTaskIds = enabledTasks.map((t) => t.id);
+          const enabledTaskIds = tasksBeforeSelfManaged.map((t) => t.id);
           setAllTasksRunStatus(instanceId, enabledTaskIds, 'pending');
 
           // 记录映射关系
           taskIds.forEach((maaTaskId, index) => {
-            if (enabledTasks[index]) {
-              registerMaaTaskMapping(instanceId, maaTaskId, enabledTasks[index].id);
+            if (tasksBeforeSelfManaged[index]) {
+              registerMaaTaskMapping(instanceId, maaTaskId, tasksBeforeSelfManaged[index].id);
               // MXU 特殊任务的 label 需要用 t() 翻译
-              const specialTask = getMxuSpecialTask(enabledTasks[index].taskName);
+              const specialTask = getMxuSpecialTask(tasksBeforeSelfManaged[index].taskName);
               const taskDef =
                 specialTask?.taskDef ||
-                projectInterface?.task.find((t) => t.name === enabledTasks[index].taskName);
+                projectInterface?.task.find((t) => t.name === tasksBeforeSelfManaged[index].taskName);
               const taskDisplayName =
-                enabledTasks[index].customName ||
+                tasksBeforeSelfManaged[index].customName ||
                 (specialTask && taskDef?.label
                   ? t(taskDef.label)
                   : resolveI18nText(taskDef?.label, translations)) ||
-                enabledTasks[index].taskName;
+                tasksBeforeSelfManaged[index].taskName;
               registerTaskIdName(maaTaskId, taskDisplayName);
             }
           });
@@ -319,6 +350,7 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
           startTaskQueueMonitor(instanceId);
           setIsStarting(false);
         } catch (err) {
+          clearExitAfterTaskQueueSettled(instanceId);
           log.error(`[${instanceName}] 任务启动异常:`, err);
           const failedAgentConfigs = normalizeAgentConfigs(projectInterface?.agent);
           if (failedAgentConfigs && failedAgentConfigs.length > 0) {
