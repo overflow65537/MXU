@@ -125,20 +125,28 @@ async function monitorTaskQueue(instanceId: string, controller: AbortController)
   await finalizeTaskRun(instanceId, hasFailed ? 'Failed' : 'Succeeded');
 }
 
-export function cancelTaskQueueMonitor(instanceId: string) {
+function cancelTaskQueueMonitorInternal(instanceId: string, clearExitSchedule: boolean) {
   const controller = taskMonitorControllers.get(instanceId);
   if (!controller) {
-    clearExitAfterTaskQueueSettled(instanceId);
+    if (clearExitSchedule) {
+      clearExitAfterTaskQueueSettled(instanceId);
+    }
     return;
   }
 
   controller.abort();
   taskMonitorControllers.delete(instanceId);
-  clearExitAfterTaskQueueSettled(instanceId);
+  if (clearExitSchedule) {
+    clearExitAfterTaskQueueSettled(instanceId);
+  }
+}
+
+export function cancelTaskQueueMonitor(instanceId: string) {
+  cancelTaskQueueMonitorInternal(instanceId, true);
 }
 
 export function startTaskQueueMonitor(instanceId: string) {
-  cancelTaskQueueMonitor(instanceId);
+  cancelTaskQueueMonitorInternal(instanceId, false);
 
   const controller = new AbortController();
   taskMonitorControllers.set(instanceId, controller);
