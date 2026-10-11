@@ -96,3 +96,14 @@ test('getInputValueError：verify 本身非法时不再静默放行', () => {
   assert.deepEqual(getInputValueError(broken, '1500'), { kind: 'invalid-pattern' });
   assert.deepEqual(getInputValueError(broken, ''), { kind: 'invalid-pattern' });
 });
+
+test('getInputValueError：密码字段空值视为"未设置"，非空时照常校验', () => {
+  const password = input({ password: true, verify: '^\\d{6}$' });
+  assert.equal(getInputValueError(password, ''), null);
+  assert.deepEqual(getInputValueError(password, '12345'), { kind: 'pattern' });
+  assert.equal(getInputValueError(password, '123456'), null);
+  // 校验规则本身无效时仍要报出来（项目定义问题，与取值无关）
+  assert.deepEqual(getInputValueError(input({ password: true, verify: '(' }), ''), {
+    kind: 'invalid-pattern',
+  });
+});

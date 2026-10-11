@@ -140,7 +140,11 @@ function persistOptionValues(
   projectName?: string,
 ): Record<string, OptionValue> {
   if (!pi?.option) return optionValues;
-  return encryptPasswordOptionValues(optionValues, pi.option, projectName);
+  // 落盘前先归一（消除 "" / null，声明了 default 的输入补回默认值），再加密密码字段：
+  // 编辑器里"正在编辑"的临时空态不会写进配置文件，磁盘上的非空不变量与内存一致。
+  // 组件内的临时状态不受影响。
+  const cleaned = cleanOptionValues(optionValues, pi);
+  return encryptPasswordOptionValues(cleaned, pi.option, projectName);
 }
 
 function updateSelectedName(

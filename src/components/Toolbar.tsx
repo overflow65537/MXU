@@ -403,12 +403,16 @@ export function Toolbar({ showAddPanel, onToggleAddPanel, className }: ToolbarPr
         return failStart(t('taskList.noCompatibleTasks'));
       }
 
+      // 校验与代入必须用同一份快照：中间隔着连接控制器、加载资源等异步等待，
+      // 期间用户改了全局选项会让"已校验的值"和"真正代入的值"不是同一份。
+      const globalOptionValues = useAppStore.getState().globalOptionValues;
+
       const checkboxViolations = validateInstanceCheckboxCounts(
         compatibleTasks,
         projectInterface,
         controllerName,
         resourceName,
-        useAppStore.getState().globalOptionValues,
+        globalOptionValues,
       );
       if (checkboxViolations.length > 0) {
         for (const violation of checkboxViolations) {
@@ -432,7 +436,7 @@ export function Toolbar({ showAddPanel, onToggleAddPanel, className }: ToolbarPr
         projectInterface,
         controllerName,
         resourceName,
-        useAppStore.getState().globalOptionValues,
+        globalOptionValues,
       );
       if (inputViolations.length > 0) {
         for (const violation of inputViolations) {
@@ -1211,7 +1215,7 @@ export function Toolbar({ showAddPanel, onToggleAddPanel, className }: ToolbarPr
                 projectInterface,
                 currentControllerName,
                 currentResourceName,
-                useAppStore.getState().globalOptionValues,
+                globalOptionValues,
               ),
               selected_task_id: selectedTask.id,
               task_name: taskDef.name,
@@ -1267,7 +1271,7 @@ export function Toolbar({ showAddPanel, onToggleAddPanel, className }: ToolbarPr
           },
           collectPasswordPlaintextsFromRunnableTasks(
             runnableTasks,
-            useAppStore.getState().globalOptionValues,
+            globalOptionValues,
             projectInterface?.option ?? {},
           ),
         );

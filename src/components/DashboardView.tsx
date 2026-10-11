@@ -248,12 +248,16 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
               projectInterface?.task.find((item) => item.name === task.taskName);
             return isTaskCompatible(taskDef, currentControllerName, currentResourceName);
           });
+          // 校验与代入必须用同一份快照：中间隔着连接控制器、加载资源等异步等待，
+          // 期间用户改了全局选项会让"已校验的值"和"真正代入的值"不是同一份。
+          const globalOptionValues = useAppStore.getState().globalOptionValues;
+
           const checkboxViolations = validateInstanceCheckboxCounts(
             compatibleEnabledTasks,
             projectInterface,
             currentControllerName,
             currentResourceName,
-            useAppStore.getState().globalOptionValues,
+            globalOptionValues,
           );
           if (checkboxViolations.length > 0) {
             for (const violation of checkboxViolations) {
@@ -277,7 +281,7 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
             projectInterface,
             currentControllerName,
             currentResourceName,
-            useAppStore.getState().globalOptionValues,
+            globalOptionValues,
           );
           if (inputViolations.length > 0) {
             for (const violation of inputViolations) {
@@ -366,7 +370,7 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
                   projectInterface,
                   currentControllerName,
                   currentResourceName,
-                  useAppStore.getState().globalOptionValues,
+                  globalOptionValues,
                 ),
                 selected_task_id: selectedTask.id,
                 task_name: taskDef.name,
@@ -415,7 +419,7 @@ function InstanceCard({ instanceId, instanceName, isActive, onSelect }: Instance
             },
             collectPasswordPlaintextsFromRunnableTasks(
               runnableTasks,
-              useAppStore.getState().globalOptionValues,
+              globalOptionValues,
               projectInterface?.option ?? {},
             ),
           );

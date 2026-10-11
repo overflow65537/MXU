@@ -62,6 +62,9 @@ export const getInputValueError = (input: InputItem, value: string): InputValueE
   }
 
   if (value === '') {
+    // 密码字段没有 default（PI 禁止设置），空值表达"未设置"，不因 verify 拒绝空串而报错；
+    // 非空密码照常校验格式，保证 UI 红框与启动闸门判定一致。
+    if (isPasswordInput(input)) return null;
     // int/bool 的空值由代入阶段兜底（0 / false），这里只按 verify 判定
     return regex && !regex.test('') ? { kind: 'empty' } : null;
   }

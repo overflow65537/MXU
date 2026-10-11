@@ -20,7 +20,6 @@ import { getMxuSpecialTask, isMxuSpecialTask } from '@/types/specialTasks';
 import type { TFunction } from 'i18next';
 import { findSwitchCase } from './optionHelpers';
 import { getInputValueError, type InputValueErrorKind } from './optionInputValue';
-import { isPasswordInput } from './passwordOptionValues';
 
 export interface CheckboxCountViolation {
   type: 'checkbox';
@@ -277,7 +276,8 @@ function validateOptionKeys(
     }
 
     // input / hotkey：值必须通过自身声明的格式要求（verify），否则拒绝运行。
-    // 取值方式与 pipelineOverride 的代入保持一致（空值同样按 default 解析）。
+    // 取值方式与 pipelineOverride 的代入保持一致（空值同样按 default 解析）；
+    // 密码字段由 getInputValueError 统一处理（空 = 未设置，非空照常校验）。
     if (
       (optionDef.type === 'input' || optionDef.type === 'hotkey') &&
       (optionValue.type === 'input' || optionValue.type === 'hotkey')
@@ -286,9 +286,6 @@ function validateOptionKeys(
         optionDef.type === 'hotkey' ? (optionDef.hotkeys ?? []) : (optionDef.inputs ?? []);
 
       for (const inputDef of inputDefs) {
-        // 密码字段的 values 由加密通道管理，不参与取值校验
-        if (isPasswordInput(inputDef)) continue;
-
         const value = optionValue.values[inputDef.name] ?? inputDef.default ?? '';
         const error = getInputValueError(inputDef, value);
         if (error) {
